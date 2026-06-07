@@ -1,6 +1,7 @@
 import { createMcpHandler } from 'agents/mcp';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { buildYahooTransitUrl, extractMainContent } from './yahoo';
 
 // input schema for search_route
 const searchRouteSchema = {
@@ -191,109 +192,6 @@ function createServer(): McpServer {
   );
 
   return server;
-}
-
-export interface SearchOptions {
-  timeType: 'departure' | 'arrival' | 'first_train' | 'last_train' | 'unspecified';
-  ticket: 'ic' | 'cash';
-  seatPreference: 'non_reserved' | 'reserved' | 'green';
-  walkSpeed: 'fast' | 'slightly_fast' | 'slightly_slow' | 'slow';
-  sortBy: 'time' | 'transfer' | 'fare';
-  useAirline: boolean;
-  useShinkansen: boolean;
-  useExpress: boolean;
-  useHighwayBus: boolean;
-  useLocalBus: boolean;
-  useFerry: boolean;
-}
-
-export function buildYahooTransitUrl(
-  from: string,
-  to: string,
-  via: string[],
-  year: number,
-  month: number,
-  day: number,
-  hour: number,
-  minute: number,
-  options: SearchOptions
-): string {
-  // map options to Yahoo URL parameters
-  // type: 1=出発, 4=到着, 3=始発, 2=終電, 5=指定なし
-  const timeTypeMap = { departure: '1', arrival: '4', first_train: '3', last_train: '2', unspecified: '5' };
-  // ticket: ic=ICカード優先, normal=現金（きっぷ）優先
-  const ticketMap = { ic: 'ic', cash: 'normal' };
-  // expkind: 1=自由席優先, 2=指定席優先, 3=グリーン車優先
-  const seatPreferenceMap = { non_reserved: '1', reserved: '2', green: '3' };
-  // ws: 1=急いで, 2=少し急いで, 3=少しゆっくり, 4=ゆっくり
-  const walkSpeedMap = { fast: '1', slightly_fast: '2', slightly_slow: '3', slow: '4' };
-  // s: 0=到着が早い順, 1=料金が安い順, 2=乗換回数順
-  const sortByMap = { time: '0', fare: '1', transfer: '2' };
-
-  const params = new URLSearchParams({
-    from: from,
-    to: to,
-    y: year.toString(),
-    m: month.toString().padStart(2, '0'),
-    d: day.toString().padStart(2, '0'),
-    hh: hour.toString(),
-    m1: Math.floor(minute / 10).toString(),
-    m2: (minute % 10).toString(),
-    type: timeTypeMap[options.timeType],
-    ticket: ticketMap[options.ticket],
-    expkind: seatPreferenceMap[options.seatPreference],
-    ws: walkSpeedMap[options.walkSpeed],
-    s: sortByMap[options.sortBy],
-    al: options.useAirline ? '1' : '0',
-    shin: options.useShinkansen ? '1' : '0',
-    ex: options.useExpress ? '1' : '0',
-    hb: options.useHighwayBus ? '1' : '0',
-    lb: options.useLocalBus ? '1' : '0',
-    sr: options.useFerry ? '1' : '0',
-  });
-
-  // add via stations (multiple via params supported)
-  for (const station of via) {
-    params.append('via', station);
-  }
-
-  return `https://transit.yahoo.co.jp/search/result?${params.toString()}`;
-}
-
-export function extractMainContent(html: string): string {
-  // remove noise: scripts, styles, comments
-  let content = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
-  content = content.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
-  content = content.replace(/<!--[\s\S]*?-->/g, '');
-
-  // remove common noise elements (ads, nav, header, footer)
-  content = content.replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, '');
-  content = content.replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '');
-  content = content.replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, '');
-  content = content.replace(/<aside[^>]*>[\s\S]*?<\/aside>/gi, '');
-
-  // extract route section (keep HTML structure)
-  const routeStartMatch = content.match(/(<div[^>]*class="[^"]*routeDetail[^"]*"[^>]*>)/i);
-  const routeEndMatch = content.indexOf('条件を変更して検索');
-
-  if (routeStartMatch && routeEndMatch !== -1) {
-    const routeStart = content.indexOf(routeStartMatch[0]);
-    return content.substring(routeStart, routeEndMatch);
-  }
-
-  // fallback: convert to text if structure not found
-  content = content.replace(/<[^>]+>/g, '\n');
-  content = content.replace(/\n\s*\n/g, '\n');
-  content = content.trim();
-
-  const textRouteStart = content.indexOf('ルート1');
-  const textRouteEnd = content.indexOf('条件を変更して検索');
-
-  if (textRouteStart !== -1 && textRouteEnd !== -1) {
-    return content.substring(textRouteStart, textRouteEnd);
-  }
-
-  return content;
 }
 
 // Cloudflare Workers entry point — stateless Streamable HTTP MCP server on /mcp
