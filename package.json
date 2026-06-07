@@ -4,10 +4,10 @@
   "description": "Yahoo!乗換案内を使った日本の電車乗り換え検索MCP (Cloudflare Workers / Streamable HTTP)",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "start": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "cf-typegen": "wrangler types",
+    "dev": "npx wrangler dev",
+    "start": "npx wrangler dev",
+    "deploy": "npx wrangler deploy",
+    "cf-typegen": "npx wrangler types",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -34,8 +34,7 @@
     "@cloudflare/workers-types": "^4.0.0",
     "@types/node": "^20.0.0",
     "typescript": "^5.0.0",
-    "vitest": "^3.0.0",
-    "wrangler": "^4.0.0"
+    "vitest": "^3.0.0"
   },
   "engines": {
     "node": ">=18.0.0"
