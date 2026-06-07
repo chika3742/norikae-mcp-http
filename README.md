@@ -1,13 +1,14 @@
 # 乗換案内MCP 🚃 / Norikae MCP
 
-[![npm version](https://badge.fury.io/js/norikae-mcp.svg)](https://www.npmjs.com/package/norikae-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 日本の電車乗り換え検索ができるMCP（Model Context Protocol）サーバーです。
 Yahoo!乗換案内のデータを使用して、駅から駅への最適なルートを検索できます。
+**Cloudflare Workers 上で動作する HTTP（Streamable HTTP）形式のリモート MCP サーバー**です。
 
 *An MCP (Model Context Protocol) server for searching train routes in Japan.
-Uses Yahoo! Transit data to find optimal routes between stations.*
+Uses Yahoo! Transit data to find optimal routes between stations.
+Runs on **Cloudflare Workers as a remote MCP server over HTTP (Streamable HTTP)**.*
 
 ## 機能 / Features
 
@@ -19,27 +20,38 @@ Uses Yahoo! Transit data to find optimal routes between stations.*
 
 ## 必要条件 / Requirements
 
-- Node.js 18以上 / Node.js 18+
+- Cloudflare アカウント（デプロイ用）/ Cloudflare account (for deployment)
+- Node.js 18以上（開発・デプロイ用）/ Node.js 18+ (for development & deployment)
 
-## インストール / Installation
+## デプロイ / Deployment
+
+このサーバーは Cloudflare Workers にデプロイして使用します。
+
+*This server is deployed to Cloudflare Workers.*
 
 ```bash
-npm install -g norikae-mcp
+# 依存関係のインストール / Install dependencies
+npm install
+
+# Cloudflare へデプロイ / Deploy to Cloudflare
+npm run deploy
 ```
 
-または、npxで直接実行 / Or run directly with npx:
+デプロイ後、`https://<worker-subdomain>.workers.dev/mcp` が MCP エンドポイントになります。
 
-```bash
-npx norikae-mcp
-```
+*After deployment, your MCP endpoint will be `https://<worker-subdomain>.workers.dev/mcp`.*
+
+エンドポイント / Endpoint:
+- **Streamable HTTP**: `POST https://<worker-subdomain>.workers.dev/mcp`
+- 認証なし（authless / 公開）/ No authentication (authless / public)
 
 ## 設定 / Configuration
 
 ### Claude Desktop での設定 / Claude Desktop Configuration
 
-設定ファイルを開いて以下を追加してください：
+リモート MCP サーバーへ接続するには `mcp-remote` を利用します。設定ファイルを開いて以下を追加してください：
 
-*Open the config file and add the following:*
+*Use `mcp-remote` to connect to the remote MCP server. Open the config file and add the following:*
 
 **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 
@@ -50,7 +62,7 @@ npx norikae-mcp
   "mcpServers": {
     "norikae": {
       "command": "npx",
-      "args": ["-y", "norikae-mcp"]
+      "args": ["-y", "mcp-remote", "https://<worker-subdomain>.workers.dev/mcp"]
     }
   }
 }
@@ -60,18 +72,17 @@ npx norikae-mcp
 
 *After saving, restart Claude Desktop.*
 
-### Cursor での設定 / Cursor Configuration
+### Streamable HTTP に対応したクライアント / Clients supporting Streamable HTTP
 
-`~/.cursor/mcp.json` または プロジェクトの `.cursor/mcp.json` に以下を追加：
+Streamable HTTP トランスポートに直接対応したクライアントでは、URL を指定するだけで接続できます：
 
-*Add the following to `~/.cursor/mcp.json` or your project's `.cursor/mcp.json`:*
+*Clients that natively support the Streamable HTTP transport can connect by URL directly:*
 
 ```json
 {
   "mcpServers": {
     "norikae": {
-      "command": "npx",
-      "args": ["-y", "norikae-mcp"]
+      "url": "https://<worker-subdomain>.workers.dev/mcp"
     }
   }
 }
@@ -282,21 +293,36 @@ cd norikae-mcp
 # 依存関係のインストール / Install dependencies
 npm install
 
-# ビルド / Build
-npm run build
-
-# 開発モード / Development mode (watch)
+# ローカル開発サーバー起動 / Start local dev server (wrangler dev)
 npm run dev
+# → http://localhost:8787/mcp
+
+# 型チェック / Type check
+npm run type-check
 
 # テスト実行 / Run tests
 npm test
+
+# Cloudflare へデプロイ / Deploy to Cloudflare
+npm run deploy
+```
+
+ローカル起動後は MCP Inspector でも疎通確認できます：
+
+*After starting locally, you can also verify with the MCP Inspector:*
+
+```bash
+npx @modelcontextprotocol/inspector
+# Transport: Streamable HTTP / URL: http://localhost:8787/mcp
 ```
 
 ## 技術詳細 / Technical Details
 
 - MCP SDK: `@modelcontextprotocol/sdk`
+- MCP ハンドラ / MCP handler: `agents` (`createMcpHandler`)
+- トランスポート / Transport: Streamable HTTP (ステートレス / stateless, `/mcp`)
 - データソース / Data source: Yahoo!乗換案内 (transit.yahoo.co.jp)
-- ランタイム / Runtime: Node.js 18+
+- ランタイム / Runtime: Cloudflare Workers
 
 ## 注意事項 / Notes
 

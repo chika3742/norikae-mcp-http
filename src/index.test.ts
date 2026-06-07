@@ -4,72 +4,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { buildYahooTransitUrl, extractMainContent, type SearchOptions } from './yahoo';
 
-// re-implement functions for testing (or export from index.ts)
-interface SearchOptions {
-  timeType: 'departure' | 'arrival' | 'first_train' | 'last_train' | 'unspecified';
-  ticket: 'ic' | 'cash';
-  seatPreference: 'non_reserved' | 'reserved' | 'green';
-  walkSpeed: 'fast' | 'slightly_fast' | 'slightly_slow' | 'slow';
-  sortBy: 'time' | 'transfer' | 'fare';
-  useAirline: boolean;
-  useShinkansen: boolean;
-  useExpress: boolean;
-  useHighwayBus: boolean;
-  useLocalBus: boolean;
-  useFerry: boolean;
-}
-
-function buildYahooTransitUrl(
-  from: string,
-  to: string,
-  via: string[],
-  year: number,
-  month: number,
-  day: number,
-  hour: number,
-  minute: number,
-  options: SearchOptions
-): string {
-  // type: 1=出発, 4=到着, 3=始発, 2=終電, 5=指定なし
-  const timeTypeMap = { departure: '1', arrival: '4', first_train: '3', last_train: '2', unspecified: '5' };
-  // ticket: ic=ICカード優先, normal=現金（きっぷ）優先
-  const ticketMap = { ic: 'ic', cash: 'normal' };
-  // expkind: 1=自由席優先, 2=指定席優先, 3=グリーン車優先
-  const seatPreferenceMap = { non_reserved: '1', reserved: '2', green: '3' };
-  // ws: 1=急いで, 2=少し急いで, 3=少しゆっくり, 4=ゆっくり
-  const walkSpeedMap = { fast: '1', slightly_fast: '2', slightly_slow: '3', slow: '4' };
-  // s: 0=到着が早い順, 1=料金が安い順, 2=乗換回数順
-  const sortByMap = { time: '0', fare: '1', transfer: '2' };
-
-  const params = new URLSearchParams({
-    from: from,
-    to: to,
-    y: year.toString(),
-    m: month.toString().padStart(2, '0'),
-    d: day.toString().padStart(2, '0'),
-    hh: hour.toString(),
-    m1: Math.floor(minute / 10).toString(),
-    m2: (minute % 10).toString(),
-    type: timeTypeMap[options.timeType],
-    ticket: ticketMap[options.ticket],
-    expkind: seatPreferenceMap[options.seatPreference],
-    ws: walkSpeedMap[options.walkSpeed],
-    s: sortByMap[options.sortBy],
-    al: options.useAirline ? '1' : '0',
-    shin: options.useShinkansen ? '1' : '0',
-    ex: options.useExpress ? '1' : '0',
-    hb: options.useHighwayBus ? '1' : '0',
-    lb: options.useLocalBus ? '1' : '0',
-    sr: options.useFerry ? '1' : '0',
-  });
-
-  for (const station of via) {
-    params.append('via', station);
-  }
-
-  return `https://transit.yahoo.co.jp/search/result?${params.toString()}`;
-}
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const defaultOptions: SearchOptions = {
   timeType: 'departure',
@@ -209,31 +149,44 @@ describe('buildYahooTransitUrl', () => {
 });
 
 describe('extractMainContent', () => {
-  // simple mock test for HTML extraction
-  it('should extract route section from HTML', () => {
-    const mockHtml = `
-      <html>
-        <script>var x = 1;</script>
-        <style>.foo { color: red; }</style>
-        <nav>Navigation</nav>
-        <div>ルート1のルート情報</div>
-        <div>条件を変更して検索</div>
-      </html>
-    `;
+  const sample = readFileSync(join(__dirname, '__fixtures__', 'yahoo-sample.html'), 'utf-8');
+  const result = extractMainContent(sample);
 
-    // basic extraction test - just verify it doesn't crash
-    expect(mockHtml).toContain('ルート1');
+  it('should drop all HTML tags', () => {
+    expect(result).not.toMatch(/<[^>]+>/);
   });
-});
 
-describe('SearchOptions defaults', () => {
-  it('should have correct default values', () => {
-    expect(defaultOptions.timeType).toBe('departure');
-    expect(defaultOptions.ticket).toBe('ic');
-    expect(defaultOptions.seatPreference).toBe('non_reserved');
-    expect(defaultOptions.walkSpeed).toBe('slightly_slow');
-    expect(defaultOptions.sortBy).toBe('time');
-    expect(defaultOptions.useShinkansen).toBe(true);
-    expect(defaultOptions.useAirline).toBe(true);
+  it('should drop UI chrome and ads', () => {
+    expect(result).not.toContain('ルート保存');
+    expect(result).not.toContain('定期券');
+    expect(result).not.toContain('ルート共有');
+    expect(result).not.toContain('印刷する');
+    expect(result).not.toContain('時刻表');
+    expect(result).not.toContain('地図');
+    expect(result).not.toContain('カレンダーに登録');
+    expect(result).not.toContain('adArea');
+    expect(result).not.toContain('次の3件');
+  });
+
+  it('should keep each route summary', () => {
+    expect(result).toContain('ルート1（早楽安）');
+    expect(result).toContain('ルート2（楽）');
+    expect(result).toContain('ルート3（楽安）');
+    expect(result).toContain('乗換：0回');
+    expect(result).toContain('IC優先：480円');
+    expect(result).toContain('30.3km');
+  });
+
+  it('should keep stations, lines and fares in order', () => {
+    expect(result).toContain('08:53 発 岐阜');
+    expect(result).toContain('09:14 着 名古屋');
+    expect(result).toContain('ＪＲ東海道本線特別快速豊橋行');
+    expect(result).toContain('[発] 1番線 → [着] 3番線');
+    expect(result).toContain('自由席：760円'); // express leg on route 2
+  });
+
+  it('should be far smaller than the source HTML', () => {
+    // tag-stripping should remove the bulk of the markup
+    expect(result.length).toBeLessThan(sample.length / 3);
   });
 });
