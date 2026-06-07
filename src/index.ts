@@ -1,13 +1,6 @@
-#!/usr/bin/env node
-
+import { createMcpHandler } from 'agents/mcp';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-
-const server = new McpServer({
-  name: 'norikae-mcp',
-  version: '0.1.0',
-});
 
 // input schema for search_route
 const searchRouteSchema = {
@@ -32,19 +25,37 @@ const searchRouteSchema = {
   useFerry: z.boolean().optional().describe('フェリーを使う / Use ferries'),
 };
 
-// register prompt for usage instructions
-server.registerPrompt(
-  'norikae-usage',
-  {
-    description: 'Instructions for using the Japanese train route search tool',
-  },
-  () => ({
-    messages: [
-      {
-        role: 'user',
-        content: {
-          type: 'text',
-          text: `# 乗換案内MCP 使用ガイド / Norikae MCP Usage Guide
+// register search_route tool
+const toolDescription = `Search train routes between stations in Japan using Yahoo! Transit.
+
+IMPORTANT: Station names MUST be in Japanese kanji/kana. Convert before calling:
+
+English → Japanese:
+- Tokyo → 東京, Shinjuku → 新宿, Shibuya → 渋谷, Ikebukuro → 池袋
+- Ueno → 上野, Akihabara → 秋葉原, Ginza → 銀座, Roppongi → 六本木
+- Yokohama → 横浜, Osaka → 大阪, Kyoto → 京都
+- Narita Airport → 成田空港, Haneda Airport → 羽田空港
+
+Chinese (Simplified/Traditional) → Japanese kanji:
+- 东京/東京 → 東京, 新宿 → 新宿, 涩谷/澀谷 → 渋谷
+- 秋叶原/秋葉原 → 秋葉原, 横滨/橫濱 → 横浜
+Note: Japanese kanji may differ from Chinese hanzi (e.g., 渋 vs 涩/澀, 横 vs 横/橫)
+
+Examples:
+- "Tokyo to Shinjuku" → from: "東京", to: "新宿"
+- "从东京到新宿" → from: "東京", to: "新宿"
+- "Shibuya to Ikebukuro via Harajuku" → from: "渋谷", to: "池袋", via: ["原宿"]
+
+Options summary:
+- timeType: departure(出発), arrival(到着), first_train(始発), last_train(終電), unspecified(指定なし)
+- ticket: ic(ICカード), cash(きっぷ)
+- seatPreference: non_reserved(自由席), reserved(指定席), green(グリーン車)
+- walkSpeed: fast(急いで), slightly_fast(少し急いで), slightly_slow(少しゆっくり), slow(ゆっくり)
+- sortBy: time(到着が早い順), transfer(乗換回数順), fare(料金安い順)
+- useAirline, useShinkansen, useExpress, useHighwayBus, useLocalBus, useFerry: true/false`;
+
+// usage instructions registered as an MCP prompt
+const usagePromptText = `# 乗換案内MCP 使用ガイド / Norikae MCP Usage Guide
 
 ## 重要 / Important
 - 駅名は必ず日本語（漢字・かな）で入力してください
@@ -83,105 +94,106 @@ User: "How do I get from Tokyo to Shinjuku?"
 → Call search_route with: from="東京", to="新宿"
 
 User: "東京から渋谷まで表参道経由で"
-→ Call search_route with: from="東京", to="渋谷", via=["表参道"]`,
-        },
-      },
-    ],
-  })
-);
+→ Call search_route with: from="東京", to="渋谷", via=["表参道"]`;
 
-// register search_route tool
-const toolDescription = `Search train routes between stations in Japan using Yahoo! Transit.
+/**
+ * Create a fresh McpServer instance per request.
+ *
+ * createMcpHandler runs the server statelessly, and the MCP SDK warns against
+ * sharing a single server/transport across clients (responses can leak between
+ * them), so we build a new instance for every incoming request.
+ */
+function createServer(): McpServer {
+  const server = new McpServer({
+    name: 'norikae-mcp',
+    version: '0.2.0',
+  });
 
-IMPORTANT: Station names MUST be in Japanese kanji/kana. Convert before calling:
-
-English → Japanese:
-- Tokyo → 東京, Shinjuku → 新宿, Shibuya → 渋谷, Ikebukuro → 池袋
-- Ueno → 上野, Akihabara → 秋葉原, Ginza → 銀座, Roppongi → 六本木
-- Yokohama → 横浜, Osaka → 大阪, Kyoto → 京都
-- Narita Airport → 成田空港, Haneda Airport → 羽田空港
-
-Chinese (Simplified/Traditional) → Japanese kanji:
-- 东京/東京 → 東京, 新宿 → 新宿, 涩谷/澀谷 → 渋谷
-- 秋叶原/秋葉原 → 秋葉原, 横滨/橫濱 → 横浜
-Note: Japanese kanji may differ from Chinese hanzi (e.g., 渋 vs 涩/澀, 横 vs 横/橫)
-
-Examples:
-- "Tokyo to Shinjuku" → from: "東京", to: "新宿"
-- "从东京到新宿" → from: "東京", to: "新宿"
-- "Shibuya to Ikebukuro via Harajuku" → from: "渋谷", to: "池袋", via: ["原宿"]
-
-Options summary:
-- timeType: departure(出発), arrival(到着), first_train(始発), last_train(終電), unspecified(指定なし)
-- ticket: ic(ICカード), cash(きっぷ)
-- seatPreference: non_reserved(自由席), reserved(指定席), green(グリーン車)
-- walkSpeed: fast(急いで), slightly_fast(少し急いで), slightly_slow(少しゆっくり), slow(ゆっくり)
-- sortBy: time(到着が早い順), transfer(乗換回数順), fare(料金安い順)
-- useAirline, useShinkansen, useExpress, useHighwayBus, useLocalBus, useFerry: true/false`;
-
-server.registerTool(
-  'search_route',
-  {
-    title: '乗り換え検索',
-    description: toolDescription,
-    inputSchema: searchRouteSchema,
-    annotations: {
-      readOnlyHint: true,    // data is only read, not modified
-      openWorldHint: true,   // interacts with external service (Yahoo)
+  // register prompt for usage instructions
+  server.registerPrompt(
+    'norikae-usage',
+    {
+      description: 'Instructions for using the Japanese train route search tool',
     },
-  },
-  async (args) => {
-    const {
-      from, to, via, year, month, day, hour, minute,
-      timeType, ticket, seatPreference, walkSpeed, sortBy,
-      useAirline, useShinkansen, useExpress, useHighwayBus, useLocalBus, useFerry,
-    } = args;
+    () => ({
+      messages: [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text: usagePromptText,
+          },
+        },
+      ],
+    })
+  );
 
-    // default to current time if not specified
-    const now = new Date();
-    const y = year ?? now.getFullYear();
-    const m = month ?? now.getMonth() + 1;
-    const d = day ?? now.getDate();
-    const hh = hour ?? now.getHours();
-    const mm = minute ?? now.getMinutes();
+  server.registerTool(
+    'search_route',
+    {
+      title: '乗り換え検索',
+      description: toolDescription,
+      inputSchema: searchRouteSchema,
+      annotations: {
+        readOnlyHint: true,    // data is only read, not modified
+        openWorldHint: true,   // interacts with external service (Yahoo)
+      },
+    },
+    async (args) => {
+      const {
+        from, to, via, year, month, day, hour, minute,
+        timeType, ticket, seatPreference, walkSpeed, sortBy,
+        useAirline, useShinkansen, useExpress, useHighwayBus, useLocalBus, useFerry,
+      } = args;
 
-    // limit via stations to max 3
-    const viaStations = via?.slice(0, 3) ?? [];
+      // default to current time if not specified
+      const now = new Date();
+      const y = year ?? now.getFullYear();
+      const m = month ?? now.getMonth() + 1;
+      const d = day ?? now.getDate();
+      const hh = hour ?? now.getHours();
+      const mm = minute ?? now.getMinutes();
 
-    const options = {
-      timeType: timeType ?? 'departure',
-      ticket: ticket ?? 'ic',
-      seatPreference: seatPreference ?? 'non_reserved',
-      walkSpeed: walkSpeed ?? 'slightly_slow',
-      sortBy: sortBy ?? 'time',
-      useAirline: useAirline ?? true,
-      useShinkansen: useShinkansen ?? true,
-      useExpress: useExpress ?? true,
-      useHighwayBus: useHighwayBus ?? true,
-      useLocalBus: useLocalBus ?? true,
-      useFerry: useFerry ?? true,
-    };
+      // limit via stations to max 3
+      const viaStations = via?.slice(0, 3) ?? [];
 
-    const url = buildYahooTransitUrl(from, to, viaStations, y, m, d, hh, mm, options);
-
-    try {
-      const response = await fetch(url);
-      const html = await response.text();
-      const content = extractMainContent(html);
-
-      return {
-        content: [{ type: 'text', text: content }],
+      const options = {
+        timeType: timeType ?? 'departure',
+        ticket: ticket ?? 'ic',
+        seatPreference: seatPreference ?? 'non_reserved',
+        walkSpeed: walkSpeed ?? 'slightly_slow',
+        sortBy: sortBy ?? 'time',
+        useAirline: useAirline ?? true,
+        useShinkansen: useShinkansen ?? true,
+        useExpress: useExpress ?? true,
+        useHighwayBus: useHighwayBus ?? true,
+        useLocalBus: useLocalBus ?? true,
+        useFerry: useFerry ?? true,
       };
-    } catch (error) {
-      return {
-        content: [{ type: 'text', text: `エラーが発生しました: ${error}` }],
-        isError: true,
-      };
+
+      const url = buildYahooTransitUrl(from, to, viaStations, y, m, d, hh, mm, options);
+
+      try {
+        const response = await fetch(url);
+        const html = await response.text();
+        const content = extractMainContent(html);
+
+        return {
+          content: [{ type: 'text', text: content }],
+        };
+      } catch (error) {
+        return {
+          content: [{ type: 'text', text: `エラーが発生しました: ${error}` }],
+          isError: true,
+        };
+      }
     }
-  }
-);
+  );
 
-interface SearchOptions {
+  return server;
+}
+
+export interface SearchOptions {
   timeType: 'departure' | 'arrival' | 'first_train' | 'last_train' | 'unspecified';
   ticket: 'ic' | 'cash';
   seatPreference: 'non_reserved' | 'reserved' | 'green';
@@ -195,7 +207,7 @@ interface SearchOptions {
   useFerry: boolean;
 }
 
-function buildYahooTransitUrl(
+export function buildYahooTransitUrl(
   from: string,
   to: string,
   via: string[],
@@ -248,7 +260,7 @@ function buildYahooTransitUrl(
   return `https://transit.yahoo.co.jp/search/result?${params.toString()}`;
 }
 
-function extractMainContent(html: string): string {
+export function extractMainContent(html: string): string {
   // remove noise: scripts, styles, comments
   let content = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
   content = content.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
@@ -284,10 +296,9 @@ function extractMainContent(html: string): string {
   return content;
 }
 
-async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error('norikae-mcp server started');
-}
-
-main().catch(console.error);
+// Cloudflare Workers entry point — stateless Streamable HTTP MCP server on /mcp
+export default {
+  fetch(request: Request, env: unknown, ctx: ExecutionContext): Promise<Response> {
+    return createMcpHandler(createServer(), { route: '/mcp' })(request, env, ctx);
+  },
+};
